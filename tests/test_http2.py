@@ -380,7 +380,7 @@ async def test_check_avs_site_correct_site(
 async def test_check_avs_site_updates_site(
     client: AmazonHTTP2Client, avs_server: AvsServer
 ) -> None:
-    """A response naming another endpoint switches to that site."""
+    """A response naming another endpoint switches to that site for later requests."""
     avs_server.events = httpx.Response(
         HTTPStatus.OK,
         headers={"content-type": MULTIPART},
@@ -391,8 +391,14 @@ async def test_check_avs_site_updates_site(
 
     with pytest.raises(UpdatedAVSSite):
         await client._check_avs_site()
+    avs_server.events = httpx.Response(HTTPStatus.NO_CONTENT)
+    await client._check_avs_site()
 
     assert client._avs_directive_site == NEW_AVS_SITE
+    assert [str(request.url) for request in avs_server.requests] == [
+        f"{AVS_SITE}/v{HTTP2_DIRECTIVES_VERSION}/events",
+        f"{NEW_AVS_SITE}/v{HTTP2_DIRECTIVES_VERSION}/events",
+    ]
 
 
 @pytest.mark.anyio
@@ -486,6 +492,19 @@ async def test_stream_subscriber_error_is_logged(
 
 
 @pytest.mark.anyio
+async def test_stream_subscriber_cancellation_is_propagated(
+    client: AmazonHTTP2Client, avs_server: AvsServer
+) -> None:
+    """A subscriber being cancelled stops the stream instead of being logged."""
+    client.on_push_event.append(AsyncMock(side_effect=asyncio.CancelledError))
+    client.on_push_event.freeze()
+    avs_server.set_stream(_stream(_multipart(_part(_directive(_update())))))
+
+    with pytest.raises(asyncio.CancelledError):
+        await client._stream_and_process()
+
+
+@pytest.mark.anyio
 async def test_stream_stops_reading_once_stopped(
     client: AmazonHTTP2Client, avs_server: AvsServer
 ) -> None:
@@ -550,6 +569,23 @@ async def test_stream_buffer_overflow_forces_reconnect(
         await client._stream_and_process()
 
     assert not client._connected_event.is_set()
+
+
+@pytest.mark.anyio
+async def test_reconnected_is_only_sent_after_first_connect(
+    client: AmazonHTTP2Client,
+) -> None:
+    """Opening the stream for the first time is not a reconnect."""
+    on_reconnected = AsyncMock()
+    client.on_reconnected.append(on_reconnected)
+    client.on_reconnected.freeze()
+
+    await client._stream_and_process()
+    on_reconnected.assert_not_awaited()
+
+    await client._stream_and_process()
+    await client._stream_and_process()
+    assert on_reconnected.await_args_list == [call(), call()]
 
 
 @pytest.mark.anyio
@@ -777,6 +813,23 @@ async def test_orchestrate_backs_off_between_reconnects(
 
 
 @pytest.mark.anyio
+async def test_restarted_processing_is_not_a_reconnect(
+    client: AmazonHTTP2Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stop and start of processing resets the first connect."""
+    client._has_connected = True
+
+    async def run_tasks(_delay: float) -> _TaskAction:
+        client._stop_event.set()
+        return _TaskAction.RECONNECT_IMMEDIATE
+
+    monkeypatch.setattr(client, "_run_tasks", run_tasks)
+    await client._orchestrate_tasks()
+
+    assert not client._has_connected
+
+
+@pytest.mark.anyio
 async def test_orchestrate_stops_during_backoff(
     client: AmazonHTTP2Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -862,6 +915,15 @@ async def test_start_after_finished_starts_new_task(
 
     assert second is not first
     assert orchestrate_tasks.await_args_list == [(), ()]
+
+
+@pytest.mark.anyio
+async def test_stop_without_start(client: AmazonHTTP2Client) -> None:
+    """Stopping a client that never started only sets the stop event."""
+    await client.stop_processing()
+
+    assert client._stop_event.is_set()
+    assert client._run_task is None
 
 
 @pytest.mark.anyio

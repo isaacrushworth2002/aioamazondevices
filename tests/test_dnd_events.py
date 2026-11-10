@@ -4,6 +4,7 @@
 """Tests for the Do Not Disturb push-event handling in AmazonEchoApi."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -76,14 +77,27 @@ async def test_dnd_event_not_overwritten_by_in_flight_sync(
 
 
 @pytest.mark.anyio
-async def test_dnd_event_without_enabled_is_ignored(
-    api: AmazonEchoApi, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            {"dopplerId": {"deviceSerialNumber": TEST_SERIAL_1}}, id="no-enabled"
+        ),
+        pytest.param(
+            {"dopplerId": {"deviceSerialNumber": TEST_SERIAL_1}, "enabled": "true"},
+            id="enabled-not-bool",
+        ),
+        pytest.param({"enabled": True}, id="no-serial"),
+    ],
+)
+async def test_dnd_event_unusable_payload_is_ignored(
+    api: AmazonEchoApi, monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]
 ) -> None:
-    """A payload with no boolean 'enabled' triggers neither sync nor update."""
+    """A payload without a boolean 'enabled' or a serial changes nothing."""
     sync = AsyncMock()
     monkeypatch.setattr(api._dnd_handler, "sync_do_not_disturb_status", sync)
 
-    await api._handle_dnd_event({"dopplerId": {"deviceSerialNumber": TEST_SERIAL_1}})
+    await api._handle_dnd_event(payload)
 
     sync.assert_not_awaited()
     assert api._dnd_handler.dnd_states == {}

@@ -45,6 +45,6 @@ async def test_refresh_resolves_default_device_from_endpoint_only_account(
     default_device = await api.get_default_device()
     assert default_device.serial_number == TEST_SERIAL_1
 
-    # not due again, so no refresh and no full sensor sync
+    # Not due again, so no refresh and no full sensor sync.
     assert await api._refresh_basic_data() is False
     assert call_order == ["update_devices"]

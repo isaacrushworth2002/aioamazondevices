@@ -4,24 +4,41 @@
 """Tests for the GraphQL driven device list."""
 
 from collections.abc import Callable
+from http import HTTPMethod
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from yarl import URL
 
 from aioamazondevices.api import AmazonEchoApi
-from aioamazondevices.const.devices import DEVICE_TYPE_AQM, SPEAKER_GROUP_FAMILY
-from aioamazondevices.const.http import ARRAY_WRAPPER
-from aioamazondevices.exceptions import CannotRetrieveData
+from aioamazondevices.const.devices import (
+    DEVICE_TYPE_AQM,
+    DEVICE_TYPES_TO_IGNORE,
+    SPEAKER_GROUP_FAMILY,
+)
+from aioamazondevices.const.http import (
+    ARRAY_WRAPPER,
+    REQUEST_AGENT,
+    URI_DEVICES,
+    URI_REBOOT,
+)
+from aioamazondevices.exceptions import CannotRestartDevice, CannotRetrieveData
 from aioamazondevices.implementation.device import AmazonDeviceHandler
-from aioamazondevices.structures import AmazonDeviceFeature
+from aioamazondevices.structures import AmazonDevice, AmazonDeviceFeature
 
-from .const import TEST_SERIAL_1, TEST_SERIAL_2
+from .const import (
+    TEST_ACCESS_TOKEN,
+    TEST_CUSTOMER_ID,
+    TEST_DEVICE_TYPE,
+    TEST_SERIAL_1,
+    TEST_SERIAL_2,
+    TEST_SERIAL_GROUP,
+)
 
 TEST_SERIAL_AQM = "AQM-1"
-TEST_SERIAL_GROUP = "GROUP-1"
 
-# the autouse fixture below replaces the lookup, keep the real one to test it
+# The autouse fixture below replaces the lookup, so keep the real one to test it.
 _get_endpoints_features = AmazonDeviceHandler._get_endpoints_features
 
 
@@ -45,7 +62,7 @@ def _base_device(
         else ["MICROPHONE", "AUDIO_PLAYER"],
         "deviceFamily": device_family,
         "deviceType": device_type,
-        "deviceOwnerCustomerId": "CUSTOMER_ID",
+        "deviceOwnerCustomerId": TEST_CUSTOMER_ID,
         "serialNumber": serial_number,
         "clusterMembers": cluster_members,
         "parentClusters": [],
@@ -86,7 +103,7 @@ def _patch_sources(
     monkeypatch: pytest.MonkeyPatch,
     handler: AmazonDeviceHandler,
     devices_endpoints: dict[str, dict[str, Any]],
-    base_devices: dict[str, dict[str, Any]] | AsyncMock,
+    base_devices: dict[str, dict[str, Any]],
 ) -> None:
     """Replace the two data sources of the device handler."""
     monkeypatch.setattr(
@@ -97,9 +114,7 @@ def _patch_sources(
     monkeypatch.setattr(
         handler,
         "_get_base_devices_data",
-        base_devices
-        if isinstance(base_devices, AsyncMock)
-        else AsyncMock(return_value=base_devices),
+        AsyncMock(return_value=base_devices),
     )
 
 
@@ -141,12 +156,12 @@ async def test_graphql_drives_the_device_list(
         handler,
         devices_endpoints={
             TEST_SERIAL_1: _endpoint(TEST_SERIAL_1),
-            # endpoint without devices-v2 data and unknown on its own
+            # Endpoint without devices-v2 data and unknown on its own.
             "UNKNOWN": _endpoint("UNKNOWN"),
         },
         base_devices={
             TEST_SERIAL_1: _base_device(TEST_SERIAL_1),
-            # known to devices-v2 but not exposed as an endpoint
+            # Known to devices-v2 but not exposed as an endpoint.
             TEST_SERIAL_2: _base_device(TEST_SERIAL_2),
         },
     )
@@ -225,11 +240,11 @@ async def test_speaker_groups_are_added_from_devices_v2(
     assert not group.voice_control_supported
     assert group.endpoint_id is None
     assert group.entity_id is None
-    # no endpoint means no display category
+    # No endpoint means no display category.
     assert group.primary_display_category == "UNKNOWN"
-    # cluster member device types are backfilled
+    # Cluster member device types are backfilled.
     assert group.device_cluster_members == {TEST_SERIAL_1: "ECHO_TYPE"}
-    # speaker groups have no endpoint to query sensors on
+    # Speaker groups have no endpoint to query sensors on.
     assert group.endpoint_id is None
 
 
@@ -368,7 +383,7 @@ async def test_devices_v2_data_enriches_the_endpoint_device(
         capabilities=["MICROPHONE", "REMINDERS", "SUPPORTS_SOFTWARE_VERSION"],
     )
     base_device["accountName"] = "This Device"
-    # only used when the endpoint reports no model at all
+    # Only used when the endpoint reports no model at all.
     base_device["deviceTypeFriendlyName"] = "Echo Show 8 (2nd Gen)"
     _patch_sources(
         monkeypatch,
@@ -380,7 +395,7 @@ async def test_devices_v2_data_enriches_the_endpoint_device(
     await handler.update_devices()
 
     device = handler.devices[TEST_SERIAL_1]
-    # devices-v2 only
+    # Devices-v2 only.
     assert device.capabilities == [
         "MICROPHONE",
         "REMINDERS",
@@ -389,10 +404,10 @@ async def test_devices_v2_data_enriches_the_endpoint_device(
     assert device.device_family == "ECHO"
     assert device.notifications_supported
     assert not device.media_player_supported
-    # a device without an endpoint model falls back to the friendly name
+    # A device without an endpoint model falls back to the friendly name.
     assert device.model == "Echo Show 8"
     assert device.hardware_version == "2nd Gen"
-    # the endpoint wins over devices-v2 for everything both of them have
+    # The endpoint wins over devices-v2 for everything both of them have.
     assert device.account_name == f"Device {TEST_SERIAL_1}"
     assert device.endpoint_id == f"endpoint-{TEST_SERIAL_1}"
     assert device.entity_id == f"entity-{TEST_SERIAL_1}"
@@ -416,7 +431,7 @@ async def test_known_devices_survive_a_failed_endpoint_lookup(
     known_devices = handler.devices
     assert list(known_devices) == [TEST_SERIAL_1]
 
-    # the GraphQL call now fails, devices-v2 is still fine
+    # The GraphQL call now fails, while devices-v2 is still fine.
     base_devices = AsyncMock(return_value={TEST_SERIAL_1: _base_device(TEST_SERIAL_1)})
     monkeypatch.setattr(handler, "_get_base_devices_data", base_devices)
     monkeypatch.setattr(
@@ -446,14 +461,14 @@ async def test_features_are_read_for_the_built_devices(
         "unitOfMeasure": _text("Alexa.Unit.Percent"),
         "presets": None,
     }
-    # light modes have numeric IDs, only the friendly names are meaningful
+    # Light modes have numeric IDs, only the friendly names are meaningful.
     mode_configuration = {
         "friendlyName": _text("Mode"),
         "order": "UNORDERED",
         "modeOptions": [
             {"value": "4", "modeResources": {"friendlyName": _text("Campfire")}},
             {"value": "6", "modeResources": {"friendlyName": _text("Christmas")}},
-            # options without a friendly name fall back to the ID
+            # Options without a friendly name fall back to the ID.
             {"value": "3", "modeResources": None},
         ],
     }
@@ -482,27 +497,27 @@ async def test_features_are_read_for_the_built_devices(
             "operations": [{"name": "setRangeValue"}],
             "configuration": range_configuration,
         },
-        # common sensor features are supported on every device type
+        # Common sensor features are supported on every device type.
         {
             "name": "temperatureSensor",
             "instance": None,
             "properties": [{"name": "temperature"}],
             "configuration": None,
         },
-        # only the templated properties of a feature are supported
+        # Only the templated properties of a feature are supported.
         {
             "name": "motionSensor",
             "instance": None,
             "properties": [{"name": "detectionState"}, {"name": "sensitivity"}],
             "configuration": None,
         },
-        # features without a name are skipped
+        # Features without a name are skipped.
         {"name": None, "instance": None, "operations": None, "configuration": None},
     ]
     aqm_features: list[dict[str, Any]] = [
-        # an instance with a specific sensor template for the device type
+        # An instance with a specific sensor template for the device type.
         {"name": "range", "instance": "4", "properties": [{"name": "rangeValue"}]},
-        # the same feature on an instance without one
+        # The same feature on an instance without one.
         {"name": "range", "instance": "1", "properties": [{"name": "rangeValue"}]},
     ]
     _patch_sources(
@@ -528,7 +543,7 @@ async def test_features_are_read_for_the_built_devices(
 
     await handler.update_devices()
 
-    # only the devices we build are queried
+    # Only the devices we build are queried.
     endpoints_features.assert_awaited_once_with(
         [f"endpoint-{TEST_SERIAL_1}", f"endpoint-{TEST_SERIAL_AQM}"]
     )
@@ -695,3 +710,80 @@ async def test_no_endpoints_skips_the_features_request(
 
     assert await _get_endpoints_features(handler, []) == {}
     session_request.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_base_devices_skip_unusable_devices(
+    api: AmazonEchoApi, mock_json_response: Callable[..., AsyncMock]
+) -> None:
+    """Empty entries, ignored device types and devices without a mic are skipped."""
+    usable = _base_device(TEST_SERIAL_1)
+    session_request = mock_json_response(
+        {
+            "devices": [
+                usable,
+                {},
+                _base_device(TEST_SERIAL_2, device_type=DEVICE_TYPES_TO_IGNORE[0]),
+                _base_device(TEST_SERIAL_GROUP, capabilities=["AUDIO_PLAYER"]),
+            ]
+        }
+    )
+
+    assert await api._device_handler._get_base_devices_data() == {TEST_SERIAL_1: usable}
+    session_request.assert_awaited_once_with(
+        method=HTTPMethod.GET,
+        url=URL.joinpath(api._session_state_data.alexa_website_url, URI_DEVICES),
+    )
+
+
+@pytest.mark.anyio
+async def test_restart_device(
+    logged_in: AmazonEchoApi,
+    mock_json_response: Callable[..., AsyncMock],
+    make_device: Callable[..., AmazonDevice],
+) -> None:
+    """A restart is posted for the device with the access token, as the app."""
+    api = logged_in
+    session_request = mock_json_response({})
+    device = make_device(TEST_SERIAL_1)
+
+    await api.restart_device(device)
+
+    session_request.assert_awaited_once_with(
+        method=HTTPMethod.POST,
+        url=URL.joinpath(
+            api._session_state_data.alexa_website_url,
+            URI_REBOOT.format(
+                device_type=TEST_DEVICE_TYPE, serial_number=TEST_SERIAL_1
+            ),
+        ),
+        input_data={
+            "deviceSerialNumber": TEST_SERIAL_1,
+            "deviceType": TEST_DEVICE_TYPE,
+        },
+        json_data=True,
+        extended_headers={
+            "Authorization": f"Bearer {TEST_ACCESS_TOKEN}",
+            "User-Agent": REQUEST_AGENT["Amazon"],
+        },
+    )
+
+
+@pytest.mark.anyio
+async def test_restart_device_failure_raises(
+    logged_in: AmazonEchoApi,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., AmazonDevice],
+) -> None:
+    """A failed restart raises CannotRestartDevice naming the device."""
+    api = logged_in
+    monkeypatch.setattr(
+        api._http_wrapper,
+        "session_request",
+        AsyncMock(side_effect=CannotRetrieveData("Request failed")),
+    )
+
+    with pytest.raises(
+        CannotRestartDevice, match=f"Failed to restart device Echo {TEST_SERIAL_1}"
+    ):
+        await api.restart_device(make_device(TEST_SERIAL_1))
