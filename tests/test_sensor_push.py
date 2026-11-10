@@ -458,6 +458,16 @@ async def test_malformed_smart_home_event_is_logged(
 
 
 @pytest.mark.anyio
+async def test_unknown_push_event_is_ignored(
+    api: AmazonEchoApi, debug_logs: pytest.LogCaptureFixture
+) -> None:
+    """Push events of an unknown type are logged and otherwise ignored."""
+    await api._http2_push_event_handler("UNKNOWN_EVENT", {})
+
+    assert "Unhandled push event type: UNKNOWN_EVENT" in debug_logs.text
+
+
+@pytest.mark.anyio
 async def test_is_tracked_endpoint(handler: AmazonSensorHandler) -> None:
     """Only endpoints with a tracked sensor are tracked."""
     assert handler.is_tracked_endpoint(ENDPOINT)

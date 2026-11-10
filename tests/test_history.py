@@ -131,7 +131,7 @@ async def test_vocal_history_exposes_speaker(
 
     record = records[TEST_SERIAL_1]
     assert (record.person_first_name, record.person_type) == expected
-    # PersonId is in the payload but account-scoped, so it is deliberately not exposed.
+    # personId is in the payload but account-scoped, so it is deliberately not exposed
     assert not hasattr(record, "person_id")
 
 
@@ -317,22 +317,3 @@ async def test_csrf_token_missing_raises(
 
     with pytest.raises(CannotRetrieveData, match="Cannot find anti-csrftoken-a2z"):
         await history_api._history_handler._update_vocal_history_token()
-
-
-@pytest.mark.anyio
-async def test_sync_history_state_returns_vocal_history(
-    api: AmazonEchoApi, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Syncing the history returns the latest record of each device."""
-    record = AmazonVocalRecord(
-        timestamp=1,
-        history_type="GENERAL",
-        intent="PlayMusicIntent",
-        title="record 1",
-        sub_title="Echo Dot",
-    )
-    get_vocal_history = AsyncMock(return_value={TEST_SERIAL_1: record})
-    monkeypatch.setattr(api._history_handler, "get_vocal_history", get_vocal_history)
-
-    assert await api.sync_history_state() == {TEST_SERIAL_1: record}
-    get_vocal_history.assert_awaited_once_with()

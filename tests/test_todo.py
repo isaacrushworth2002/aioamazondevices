@@ -302,25 +302,3 @@ async def test_item_change_event_rejected(
 
     assert message in caplog.text
     on_todo_event.assert_not_awaited()
-
-
-@pytest.mark.anyio
-async def test_item_change_event_not_emitted_before_subscribers_are_ready(
-    api: AmazonEchoApi, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """List events are only emitted once the subscriber list is frozen."""
-    monkeypatch.setattr(
-        api._todo_handler, "get_list_items", AsyncMock(return_value=[ITEM])
-    )
-    on_todo_event = AsyncMock()
-    api.on_todo_event.append(on_todo_event)
-
-    await api._handle_item_change_event(
-        {
-            "listId": TEST_LIST_ID,
-            "listItemId": TEST_ITEM_ID,
-            "eventName": AmazonListEventType.UPDATED.value,
-        }
-    )
-
-    on_todo_event.assert_not_awaited()

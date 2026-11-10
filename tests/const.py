@@ -21,4 +21,3 @@ TEST_MUSIC_PROVIDER_ID = "AMAZON_MUSIC"
 
 TEST_CSRF = "csrf-token"
 TEST_ACCESS_TOKEN = "access-token"  # noqa: S105
-TEST_REFRESH_TOKEN = "refresh-token"  # noqa: S105

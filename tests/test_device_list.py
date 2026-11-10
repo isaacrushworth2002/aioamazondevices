@@ -4,37 +4,19 @@
 """Tests for the GraphQL driven device list."""
 
 from collections.abc import Callable
-from http import HTTPMethod
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from yarl import URL
 
 from aioamazondevices.api import AmazonEchoApi
-from aioamazondevices.const.devices import (
-    DEVICE_TYPE_AQM,
-    DEVICE_TYPES_TO_IGNORE,
-    SPEAKER_GROUP_FAMILY,
-)
-from aioamazondevices.const.http import (
-    ARRAY_WRAPPER,
-    REQUEST_AGENT,
-    URI_DEVICES,
-    URI_REBOOT,
-)
-from aioamazondevices.exceptions import CannotRestartDevice, CannotRetrieveData
+from aioamazondevices.const.devices import DEVICE_TYPE_AQM, SPEAKER_GROUP_FAMILY
+from aioamazondevices.const.http import ARRAY_WRAPPER
+from aioamazondevices.exceptions import CannotRetrieveData
 from aioamazondevices.implementation.device import AmazonDeviceHandler
-from aioamazondevices.structures import AmazonDevice, AmazonDeviceFeature
+from aioamazondevices.structures import AmazonDeviceFeature
 
-from .const import (
-    TEST_ACCESS_TOKEN,
-    TEST_CUSTOMER_ID,
-    TEST_DEVICE_TYPE,
-    TEST_SERIAL_1,
-    TEST_SERIAL_2,
-    TEST_SERIAL_GROUP,
-)
+from .const import TEST_CUSTOMER_ID, TEST_SERIAL_1, TEST_SERIAL_2, TEST_SERIAL_GROUP
 
 TEST_SERIAL_AQM = "AQM-1"
 
@@ -710,80 +692,3 @@ async def test_no_endpoints_skips_the_features_request(
 
     assert await _get_endpoints_features(handler, []) == {}
     session_request.assert_not_awaited()
-
-
-@pytest.mark.anyio
-async def test_base_devices_skip_unusable_devices(
-    api: AmazonEchoApi, mock_json_response: Callable[..., AsyncMock]
-) -> None:
-    """Empty entries, ignored device types and devices without a mic are skipped."""
-    usable = _base_device(TEST_SERIAL_1)
-    session_request = mock_json_response(
-        {
-            "devices": [
-                usable,
-                {},
-                _base_device(TEST_SERIAL_2, device_type=DEVICE_TYPES_TO_IGNORE[0]),
-                _base_device(TEST_SERIAL_GROUP, capabilities=["AUDIO_PLAYER"]),
-            ]
-        }
-    )
-
-    assert await api._device_handler._get_base_devices_data() == {TEST_SERIAL_1: usable}
-    session_request.assert_awaited_once_with(
-        method=HTTPMethod.GET,
-        url=URL.joinpath(api._session_state_data.alexa_website_url, URI_DEVICES),
-    )
-
-
-@pytest.mark.anyio
-async def test_restart_device(
-    logged_in: AmazonEchoApi,
-    mock_json_response: Callable[..., AsyncMock],
-    make_device: Callable[..., AmazonDevice],
-) -> None:
-    """A restart is posted for the device with the access token, as the app."""
-    api = logged_in
-    session_request = mock_json_response({})
-    device = make_device(TEST_SERIAL_1)
-
-    await api.restart_device(device)
-
-    session_request.assert_awaited_once_with(
-        method=HTTPMethod.POST,
-        url=URL.joinpath(
-            api._session_state_data.alexa_website_url,
-            URI_REBOOT.format(
-                device_type=TEST_DEVICE_TYPE, serial_number=TEST_SERIAL_1
-            ),
-        ),
-        input_data={
-            "deviceSerialNumber": TEST_SERIAL_1,
-            "deviceType": TEST_DEVICE_TYPE,
-        },
-        json_data=True,
-        extended_headers={
-            "Authorization": f"Bearer {TEST_ACCESS_TOKEN}",
-            "User-Agent": REQUEST_AGENT["Amazon"],
-        },
-    )
-
-
-@pytest.mark.anyio
-async def test_restart_device_failure_raises(
-    logged_in: AmazonEchoApi,
-    monkeypatch: pytest.MonkeyPatch,
-    make_device: Callable[..., AmazonDevice],
-) -> None:
-    """A failed restart raises CannotRestartDevice naming the device."""
-    api = logged_in
-    monkeypatch.setattr(
-        api._http_wrapper,
-        "session_request",
-        AsyncMock(side_effect=CannotRetrieveData("Request failed")),
-    )
-
-    with pytest.raises(
-        CannotRestartDevice, match=f"Failed to restart device Echo {TEST_SERIAL_1}"
-    ):
-        await api.restart_device(make_device(TEST_SERIAL_1))

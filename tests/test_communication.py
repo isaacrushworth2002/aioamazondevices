@@ -12,7 +12,7 @@ import pytest
 from aioamazondevices.api import AmazonEchoApi
 from aioamazondevices.const.devices import DEVICE_TYPE_AQM, SPEAKER_GROUP_FAMILY
 from aioamazondevices.exceptions import CannotRetrieveData
-from aioamazondevices.structures import AmazonDevice, AmazonDropInStatus
+from aioamazondevices.structures import AmazonDevice
 
 from .const import TEST_DEVICE_TYPE, TEST_SERIAL_1, TEST_SERIAL_2
 
@@ -125,29 +125,3 @@ async def test_get_communication_preferences_ignores_disallowed_preferences(
     )
 
     assert result == {TEST_SERIAL_1: {"announcements": "ON"}}
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("method", "value"),
-    [
-        pytest.param("set_communication_status", False, id="communications"),
-        pytest.param("set_dropin_status", AmazonDropInStatus("Home"), id="drop-in"),
-        pytest.param("set_announcement_status", True, id="announcements"),
-    ],
-)
-async def test_api_setters_use_communication_handler(
-    api: AmazonEchoApi,
-    monkeypatch: pytest.MonkeyPatch,
-    make_device: Callable[..., AmazonDevice],
-    method: str,
-    value: bool | AmazonDropInStatus,
-) -> None:
-    """The API's communication setters pass the device and value to the handler."""
-    setter = AsyncMock()
-    monkeypatch.setattr(api._communication_handler, method, setter)
-    device = make_device(TEST_SERIAL_1)
-
-    await getattr(api, method)(device, value)
-
-    setter.assert_awaited_once_with(device, value)

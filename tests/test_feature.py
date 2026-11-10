@@ -58,7 +58,8 @@ def device(make_device: Callable[..., AmazonDevice]) -> AmazonDevice:
     """Return a device exposing a toggle (with instances) and a power feature."""
     device = make_device(TEST_SERIAL_1)
     device.endpoint_id = ENDPOINT_ID
-    # TurnEgg is declared so Amazon's rejection of it can still be exercised.
+    # The turnEgg operation is declared so that Amazon's rejection of it can still
+    # be exercised.
     toggle = _feature("turnOn", "turnOff", "turnEgg")
     device.features = {
         "toggle": {"11": toggle, "21": toggle},

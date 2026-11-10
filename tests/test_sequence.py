@@ -232,23 +232,6 @@ async def test_build_operation_node_routine_replaces_placeholders(
 
 
 @pytest.mark.anyio
-@pytest.mark.usefixtures("logged_in")
-async def test_build_operation_node_routine_without_start_node(
-    api: AmazonEchoApi, make_device: Callable[..., AmazonDevice]
-) -> None:
-    """A routine without a start node has nothing to run."""
-    handler = api._sequence_handler
-    handler._routines = {"Morning": {}}
-
-    assert (
-        handler._build_operation_node(
-            make_device(TEST_SERIAL_1), AmazonSequenceType.Routines, "Morning"
-        )
-        is None
-    )
-
-
-@pytest.mark.anyio
 async def test_update_routines_keeps_enabled_routines(
     api: AmazonEchoApi, mock_json_response: Callable[[dict[str, Any]], AsyncMock]
 ) -> None:

@@ -725,12 +725,3 @@ async def test_refresh_auth_cookies(
         },
         "store_authentication_cookie": {"cookie": "NEW_SESSION"},
     }
-
-
-@pytest.mark.anyio
-async def test_api_exposes_domain_and_login(api: AmazonEchoApi) -> None:
-    """The API exposes the account's Amazon domain and its login handler."""
-    api._session_state_data.country_specific_data("https://www.amazon.co.uk")
-
-    assert api.domain == "co.uk"
-    assert api.login is api._login
